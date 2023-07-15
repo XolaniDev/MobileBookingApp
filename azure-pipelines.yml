@@ -1,0 +1,132 @@
+# [2019] - [2021] Eblocks Software (Pty) Ltd, All Rights Reserved.
+# NOTICE: All information contained herein is, and remains the property of Eblocks
+# Software (Pty) Ltd.
+# and its suppliers (if any). The intellectual and technical concepts contained herein
+# are proprietary
+# to Eblocks Software (Pty) Ltd. and its suppliers (if any) and may be covered by South 
+# African, U.S.
+# and Foreign patents, patents in process, and are protected by trade secret and / or 
+# copyright law.
+# Dissemination of this information or reproduction of this material is forbidden unless
+# prior written
+# permission is obtained from Eblocks Software (Pty) Ltd.
+
+trigger:
+- main
+
+pool:
+  vmImage: windows-latest
+
+variables:
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+  flutterDirectory: './'
+  System.debug: true
+
+# Set build number.
+name: '$(date:yyyyMMdd)$(rev:.r)'
+
+steps: 
+
+# Install Node on host machine as we will copy build to express app later in pipeline.
+- task: NodeTool@0
+  displayName: Install Node js
+  inputs:
+    versionSpec: '6.x'
+    checkLatest: true
+
+# Install flutter to host machine.       
+- task: FlutterInstall@0
+  displayName: Install Flutter
+  inputs:
+    channel: 'stable'
+    version: 'latest'
+
+# Setup flutter environment in order to use flutter keyword in powershell.
+- task: PowerShell@2
+  displayName: Setup environment
+  inputs:
+    targetType: 'inline'
+    script: |
+      Write-Host "##vso[task.prependpath]$(FlutterToolPath)"
+      Write-Host "##vso[task.prependpath]$(FlutterToolPath)/cache/dart-sdk/bin"
+
+# Upgrade flutter to allow for the build output target to inclue web build.
+- task: PowerShell@2
+  displayName: Ugrade flutter to include Web build
+  inputs:
+    targetType: 'inline'
+    script: |
+      flutter upgrade
+
+# Run tests and collect code coverage.
+- task: PowerShell@2
+  displayName: Run tests and collect code coverage
+  inputs:
+    targetType: 'inline'
+    script: |     
+      flutter test --no-test-assets --coverage
+
+# Convert coverage to cobertura format.
+- task: reportgenerator@5
+  displayName: Convert code coverage from lcov to cobertura
+  inputs:
+    reports: 'coverage/lcov.info'
+    targetdir: 'coverage/cobertura'
+    reporttypes: 'Cobertura'
+
+# Publish cobertura coverage to azure.
+- task: PublishCodeCoverageResults@1
+  displayName: Publish code coverage to azure
+  inputs:
+    codeCoverageTool: 'Cobertura'
+    summaryFileLocation: 'coverage/cobertura/*.xml'
+
+# Ensure quality build by checking coverage percentage. Build will fail if coverage is below 85%.
+- task: BuildQualityChecks@8
+  displayName: Ensure quality build
+  inputs:
+    checkCoverage: true
+    coverageFailOption: 'fixed'
+    coverageType: 'lines'
+    coverageThreshold: '85'
+
+# Build app and set target as web. This is temporary as we are deploying as web app for now. Later we will need to set target to APK and deploy to playstore.
+- task: FlutterBuild@0
+  displayName: Build app and target Web
+  inputs:
+    target: 'web'
+    projectDirectory: '$(flutterDirectory)'
+    entryPoint: 'lib/main.dart'
+
+# Move required assets to correct location in build folder.
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      mv build/web/assets/assets/*.png build/web/assets/
+      mv build/web/assets/assets/fonts/*.ttf build/web/assets/fonts/
+      mv build/web/assets/assets/terms_and_conditions.json build/web/assets/     
+
+# Create express app and copy build output to public folder in order to run as web app on node express server. 
+- task: PowerShell@2
+  displayName: Create express app and copy build output to public folder
+  inputs:
+    targetType: 'inline'
+    script: |      
+      npm install -g express-generator
+      mkdir dcvc-express
+      cd dcvc-express
+      express
+      rm -r public
+      mkdir public
+      cp -r ../build/web/* ./public/ 
+      npm install
+
+# Publish Node app artifact to azure which will trigger release pipeline.
+- task: PublishBuildArtifacts@1
+  displayName: Publish Node app to artifacts
+  inputs:
+    PathtoPublish: '$(flutterDirectory)'
+    ArtifactName: 'drop'
+    publishLocation: 'Container'

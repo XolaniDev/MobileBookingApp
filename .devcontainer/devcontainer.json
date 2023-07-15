@@ -1,0 +1,12 @@
+{
+    "name": "af.assessment.web",
+    "context": "..",
+    "dockerFile": "../Dockerfile",
+    "settings": {
+        "terminal.integrated.shell.linux": null,
+    },
+    "runArgs": ["--privileged"],
+    "extensions": ["dart-code.flutter"],
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/code/workspace,type=bind,consistency=delegated",
+    "workspaceFolder": "/home/code/workspace"
+}
